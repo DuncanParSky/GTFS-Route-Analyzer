@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GTFS Route Analyzer</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background: #f5f5f5;
+}
+
+h1 {
+    margin-top: 0;
+}
+
+.card {
+    background: white;
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
+.controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+input[type="file"],
+input[type="text"],
+select {
+    padding: 8px;
+}
+
+.stats {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.stat {
+    font-weight: bold;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+th {
+    background: #eee;
+}
+
+.route-badge {
+    display: inline-block;
+    min-width: 50px;
+    text-align: center;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+#dropZone {
+    border: 2px dashed #999;
+    border-radius: 8px;
+    padding: 30px;
+    text-align: center;
+    color: #666;
+    margin-bottom: 16px;
+    background: white;
+}
+
+#dropZone.dragover {
+    border-color: #0066cc;
+    background: #eef6ff;
+}
+
+.hidden {
+    display: none;
+}
+</style>
+</head>
+<body>
+
+<h1>GTFS Route Analyzer</h1>
+
+<div id="dropZone">
+    Drag & Drop agency.txt and routes.txt here
+</div>
+
+<div class="card">
+    <div class="controls">
+        <input type="file" id="agencyFile" accept=".txt,.csv">
+        <input type="file" id="routesFile" accept=".txt,.csv">
+        <button onclick="loadFiles()">Load Files</button>
+    </div>
+
+    <div class="controls">
+        <input type="text" id="searchBox" placeholder="Search routes...">
+        <select id="agencyFilter">
+            <option value="">All Agencies</option>
+        </select>
+    </div>
+
+    <div class="stats">
+        <div class="stat">Routes: <span id="routeCount">0</span></div>
+        <div class="stat">Agencies: <span id="agencyCount">0</span></div>
+    </div>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Agency</th>
+                <th>Route</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody id="routesTable"></tbody>
+    </table>
+</div>
+
+<script>
+
+let allRoutes = [];
+let agencies = {};
+
+function parseCSV(text) {
+    const rows = [];
+    const lines = text.trim().split(/\r?\n/);
+
+    const headers = splitCSVLine(lines[0]);
+
+    for (let i = 1; i < lines.length; i++) {
+        const values = splitCSVLine(lines[i]);
+
+        const row = {};
+        headers.forEach((h, index) => {
+            row[h] = values[index] || "";
+        });
+
+        rows.push(row);
+    }
+
+    return rows;
+}
+
+function splitCSVLine(line) {
+    const result = [];
+    let current = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+
+        if (char === '"') {
+            inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+            result.push(current);
+            current = "";
+        } else {
+            current += char;
+        }
+    }
+
+    result.push(current);
+    return result;
+}
+
+async function loadFiles() {
+    const agencyFile =
+        document.getElementById('agencyFile').files[0];
+
+    const routesFile =
+        document.getElementById('routesFile').files[0];
+
+    if (!agencyFile || !routesFile) {
+        alert("Select both agency.txt and routes.txt");
+        return;
+    }
+
+    const agencyText = await agencyFile.text();
+    const routesText = await routesFile.text();
+
+    processData(agencyText, routesText);
+}
+
+function processData(agencyText, routesText) {
+
+    agencies = {};
+    allRoutes = [];
+
+    const agencyRows = parseCSV(agencyText);
+    const routeRows = parseCSV(routesText);
+
+    agencyRows.forEach(row => {
+        agencies[row.agency_id] = row.agency_name;
+    });
+
+    const seen = new Set();
+
+    routeRows.forEach(row => {
+
+        const agencyName =
+            agencies[row.agency_id] || row.agency_id;
+
+        const key =
+            row.agency_id + "|" +
+            row.route_short_name + "|" +
+            row.route_long_name;
+
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        allRoutes.push({
+            agency: agencyName,
+            route: row.route_short_name,
+            description: row.route_long_name,
+            color: row.route_color || ""
+        });
+
+    });
+
+    populateAgencyFilter();
+    renderRoutes();
+
+    document.getElementById('routeCount').textContent =
+        allRoutes.length;
+
+    document.getElementById('agencyCount').textContent =
+        Object.keys(agencies).length;
+}
+
+function populateAgencyFilter() {
+
+    const filter =
+        document.getElementById('agencyFilter');
+
+    filter.innerHTML =
+        '<option value="">All Agencies</option>';
+
+    const names = [...new Set(
+        allRoutes.map(r => r.agency)
+    )].sort();
+
+    names.forEach(name => {
+
+        const option =
+            document.createElement('option');
+
+        option.value = name;
+        option.textContent = name;
+
+        filter.appendChild(option);
+    });
+}
+
+function renderRoutes() {
+
+    const tbody =
+        document.getElementById('routesTable');
+
+    const search =
+        document.getElementById('searchBox')
+        .value
+        .toLowerCase();
+
+    const agencyFilter =
+        document.getElementById('agencyFilter').value;
+
+    tbody.innerHTML = "";
+
+    const filtered = allRoutes.filter(route => {
+
+        const matchesAgency =
+            !agencyFilter ||
+            route.agency === agencyFilter;
+
+        const matchesSearch =
+            route.route.toLowerCase().includes(search) ||
+            route.description.toLowerCase().includes(search) ||
+            route.agency.toLowerCase().includes(search);
+
+        return matchesAgency && matchesSearch;
+    });
+
+    filtered
+        .sort((a,b) =>
+            a.route.localeCompare(b.route, undefined,
+                { numeric: true }))
+        .forEach(route => {
+
+        const tr =
+            document.createElement('tr');
+
+        const badgeStyle =
+            route.color
+            ? `background:#${route.color};`
+            : "";
+
+        tr.innerHTML = `
+            <td>${route.agency}</td>
+            <td>
+                <span class="route-badge"
+                      style="${badgeStyle}">
+                    ${route.route}
+                </span>
+            </td>
+            <td>${route.description}</td>
+        `;
+
+        tbody.appendChild(tr);
+    });
+
+    document.getElementById('routeCount').textContent =
+        filtered.length;
+}
+
+document
+    .getElementById('searchBox')
+    .addEventListener('input', renderRoutes);
+
+document
+    .getElementById('agencyFilter')
+    .addEventListener('change', renderRoutes);
+
+const dropZone =
+    document.getElementById('dropZone');
+
+dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+});
+
+dropZone.addEventListener('drop', e => {
+
+    e.preventDefault();
+
+    dropZone.classList.remove('dragover');
+
+    const files = [...e.dataTransfer.files];
+
+    files.forEach(file => {
+
+        const name = file.name.toLowerCase();
+
+        if (name.includes('agency')) {
+
+            const dt = new DataTransfer();
+            dt.items.add(file);
+
+            document.getElementById('agencyFile')
+                .files = dt.files;
+        }
+
+        if (name.includes('route')) {
+
+            const dt = new DataTransfer();
+            dt.items.add(file);
+
+            document.getElementById('routesFile')
+                .files = dt.files;
+        }
+    });
+
+});
+
+</script>
+
+</body>
+</html>
