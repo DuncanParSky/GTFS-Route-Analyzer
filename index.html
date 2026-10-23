@@ -37,6 +37,11 @@ select {
     padding: 8px;
 }
 
+button {
+    padding: 8px 12px;
+    cursor: pointer;
+}
+
 .stats {
     display: flex;
     gap: 20px;
@@ -46,6 +51,11 @@ select {
 
 .stat {
     font-weight: bold;
+}
+
+#saveStatus {
+    color: #555;
+    font-weight: normal;
 }
 
 table {
@@ -93,6 +103,7 @@ th {
 }
 </style>
 </head>
+
 <body>
 
 <h1>GTFS Route Analyzer</h1>
@@ -102,6 +113,7 @@ th {
 </div>
 
 <div class="card">
+
     <div class="controls">
         <input type="file" id="agencyFile" accept=".txt,.csv">
         <input type="file" id="routesFile" accept=".txt,.csv">
@@ -109,48 +121,219 @@ th {
     </div>
 
     <div class="controls">
-        <input type="text" id="searchBox" placeholder="Search routes...">
+        <input type="file" id="progressFile" accept=".json">
+        <button onclick="loadProgress()">Load Progress JSON</button>
+        <button onclick="downloadProgress()">Download Progress JSON</button>
+        <button onclick="clearProgress()">Clear Saved Progress</button>
+    </div>
+
+    <div class="controls">
+        <input
+            type="text"
+            id="searchBox"
+            placeholder="Search routes..."
+        >
+
         <select id="agencyFilter">
             <option value="">All Agencies</option>
         </select>
     </div>
 
     <div class="stats">
-        <div class="stat">Routes: <span id="routeCount">0</span></div>
-        <div class="stat">Agencies: <span id="agencyCount">0</span></div>
+
+        <div class="stat">
+            Routes:
+            <span id="routeCount">0</span>
+        </div>
+
+        <div class="stat">
+            Agencies:
+            <span id="agencyCount">0</span>
+        </div>
+
+        <div class="stat">
+            Completed:
+            <span id="completedCount">0</span>
+        </div>
+
+        <div class="stat" id="saveStatus">
+            Progress is automatically saved
+        </div>
+
     </div>
+
 </div>
 
 <div class="card">
     <table>
+
         <thead>
             <tr>
+                <th>✓</th>
                 <th>Agency</th>
                 <th>Route</th>
                 <th>Description</th>
             </tr>
         </thead>
+
         <tbody id="routesTable"></tbody>
+
     </table>
 </div>
 
+
 <script>
 
+/* ==========================================
+   GLOBAL DATA
+========================================== */
+
 let allRoutes = [];
+let progress = {};
 let agencies = {};
 
-function parseCSV(text) {
-    const rows = [];
-    const lines = text.trim().split(/\r?\n/);
 
-    const headers = splitCSVLine(lines[0]);
+/*
+ * Change this key if you ever want to
+ * completely separate this application's
+ * saved data from another version.
+ */
+const STORAGE_KEY = "gtfs-route-analyzer-progress";
+
+
+/* ==========================================
+   LOAD SAVED PROGRESS ON STARTUP
+========================================== */
+
+loadSavedProgress();
+
+
+/* ==========================================
+   LOCAL STORAGE
+========================================== */
+
+function saveProgress() {
+
+    try {
+
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(progress)
+        );
+
+        updateSaveStatus(
+            "Progress saved automatically"
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Could not save progress:",
+            error
+        );
+
+        updateSaveStatus(
+            "Could not save progress"
+        );
+    }
+}
+
+
+function loadSavedProgress() {
+
+    try {
+
+        const saved =
+            localStorage.getItem(STORAGE_KEY);
+
+        if (!saved) {
+
+            progress = {};
+
+            return;
+        }
+
+
+        const parsed =
+            JSON.parse(saved);
+
+
+        if (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed)
+        ) {
+
+            progress = parsed;
+
+        } else {
+
+            progress = {};
+        }
+
+
+        updateSaveStatus(
+            "Saved progress restored"
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Could not load saved progress:",
+            error
+        );
+
+        progress = {};
+
+        updateSaveStatus(
+            "Could not restore saved progress"
+        );
+    }
+}
+
+
+function updateSaveStatus(message) {
+
+    document.getElementById(
+        "saveStatus"
+    ).textContent = message;
+}
+
+
+/* ==========================================
+   CSV PARSING
+========================================== */
+
+function parseCSV(text) {
+
+    const rows = [];
+
+    const lines =
+        text.trim().split(/\r?\n/);
+
+    if (!lines.length || !lines[0].trim()) {
+        return rows;
+    }
+
+    const headers =
+        splitCSVLine(lines[0]);
 
     for (let i = 1; i < lines.length; i++) {
-        const values = splitCSVLine(lines[i]);
+
+        if (!lines[i].trim()) {
+            continue;
+        }
+
+        const values =
+            splitCSVLine(lines[i]);
 
         const row = {};
+
         headers.forEach((h, index) => {
-            row[h] = values[index] || "";
+
+            row[h] =
+                values[index] || "";
+
         });
 
         rows.push(row);
@@ -159,229 +342,918 @@ function parseCSV(text) {
     return rows;
 }
 
+
 function splitCSVLine(line) {
+
     const result = [];
+
     let current = "";
+
     let inQuotes = false;
 
+
     for (let i = 0; i < line.length; i++) {
+
         const char = line[i];
 
+
         if (char === '"') {
-            inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
+
+            if (
+                inQuotes &&
+                line[i + 1] === '"'
+            ) {
+
+                current += '"';
+
+                i++;
+
+            } else {
+
+                inQuotes =
+                    !inQuotes;
+            }
+
+        } else if (
+            char === ',' &&
+            !inQuotes
+        ) {
+
             result.push(current);
+
             current = "";
+
         } else {
+
             current += char;
         }
     }
 
+
     result.push(current);
+
     return result;
 }
 
+
+/* ==========================================
+   LOAD GTFS FILES
+========================================== */
+
 async function loadFiles() {
+
     const agencyFile =
-        document.getElementById('agencyFile').files[0];
+        document.getElementById(
+            "agencyFile"
+        ).files[0];
+
 
     const routesFile =
-        document.getElementById('routesFile').files[0];
+        document.getElementById(
+            "routesFile"
+        ).files[0];
+
 
     if (!agencyFile || !routesFile) {
-        alert("Select both agency.txt and routes.txt");
+
+        alert(
+            "Select both agency.txt and routes.txt"
+        );
+
         return;
     }
 
-    const agencyText = await agencyFile.text();
-    const routesText = await routesFile.text();
 
-    processData(agencyText, routesText);
+    try {
+
+        const agencyText =
+            await agencyFile.text();
+
+        const routesText =
+            await routesFile.text();
+
+
+        processData(
+            agencyText,
+            routesText
+        );
+
+    } catch (error) {
+
+        console.error(error);
+
+        alert(
+            "There was a problem reading the GTFS files."
+        );
+    }
 }
 
-function processData(agencyText, routesText) {
+
+/* ==========================================
+   PROCESS GTFS DATA
+========================================== */
+
+function processData(
+    agencyText,
+    routesText
+) {
 
     agencies = {};
+
     allRoutes = [];
 
-    const agencyRows = parseCSV(agencyText);
-    const routeRows = parseCSV(routesText);
+
+    const agencyRows =
+        parseCSV(agencyText);
+
+    const routeRows =
+        parseCSV(routesText);
+
 
     agencyRows.forEach(row => {
-        agencies[row.agency_id] = row.agency_name;
+
+        agencies[row.agency_id] =
+            row.agency_name;
+
     });
 
-    const seen = new Set();
+
+    const seen =
+        new Set();
+
 
     routeRows.forEach(row => {
 
         const agencyName =
-            agencies[row.agency_id] || row.agency_id;
+            agencies[row.agency_id] ||
+            row.agency_id;
+
 
         const key =
-            row.agency_id + "|" +
-            row.route_short_name + "|" +
+            row.agency_id +
+            "|" +
+            row.route_short_name +
+            "|" +
             row.route_long_name;
 
-        if (seen.has(key)) return;
+
+        if (seen.has(key)) {
+            return;
+        }
+
+
         seen.add(key);
 
+
         allRoutes.push({
+
+            id: key,
+
             agency: agencyName,
-            route: row.route_short_name,
-            description: row.route_long_name,
-            color: row.route_color || ""
+
+            route:
+                row.route_short_name,
+
+            description:
+                row.route_long_name,
+
+            color:
+                row.route_color || ""
         });
 
     });
 
+
     populateAgencyFilter();
+
     renderRoutes();
 
-    document.getElementById('routeCount').textContent =
-        allRoutes.length;
-
-    document.getElementById('agencyCount').textContent =
-        Object.keys(agencies).length;
+    updateStats();
 }
+
+
+/* ==========================================
+   AGENCY FILTER
+========================================== */
 
 function populateAgencyFilter() {
 
     const filter =
-        document.getElementById('agencyFilter');
+        document.getElementById(
+            "agencyFilter"
+        );
+
 
     filter.innerHTML =
         '<option value="">All Agencies</option>';
 
-    const names = [...new Set(
-        allRoutes.map(r => r.agency)
-    )].sort();
+
+    const names =
+        [...new Set(
+            allRoutes.map(
+                r => r.agency
+            )
+        )].sort();
+
 
     names.forEach(name => {
 
         const option =
-            document.createElement('option');
+            document.createElement(
+                "option"
+            );
 
         option.value = name;
+
         option.textContent = name;
 
         filter.appendChild(option);
+
     });
 }
+
+
+/* ==========================================
+   RENDER ROUTES
+========================================== */
 
 function renderRoutes() {
 
     const tbody =
-        document.getElementById('routesTable');
+        document.getElementById(
+            "routesTable"
+        );
+
 
     const search =
-        document.getElementById('searchBox')
+        document.getElementById(
+            "searchBox"
+        )
         .value
         .toLowerCase();
 
+
     const agencyFilter =
-        document.getElementById('agencyFilter').value;
+        document.getElementById(
+            "agencyFilter"
+        ).value;
+
 
     tbody.innerHTML = "";
 
-    const filtered = allRoutes.filter(route => {
 
-        const matchesAgency =
-            !agencyFilter ||
-            route.agency === agencyFilter;
+    const filtered =
+        allRoutes.filter(route => {
 
-        const matchesSearch =
-            route.route.toLowerCase().includes(search) ||
-            route.description.toLowerCase().includes(search) ||
-            route.agency.toLowerCase().includes(search);
+            const matchesAgency =
+                !agencyFilter ||
+                route.agency ===
+                agencyFilter;
 
-        return matchesAgency && matchesSearch;
-    });
+
+            const matchesSearch =
+                route.route
+                    .toLowerCase()
+                    .includes(search) ||
+
+                route.description
+                    .toLowerCase()
+                    .includes(search) ||
+
+                route.agency
+                    .toLowerCase()
+                    .includes(search);
+
+
+            return (
+                matchesAgency &&
+                matchesSearch
+            );
+        });
+
 
     filtered
-        .sort((a,b) =>
-            a.route.localeCompare(b.route, undefined,
-                { numeric: true }))
+        .sort((a, b) =>
+            a.route.localeCompare(
+                b.route,
+                undefined,
+                {
+                    numeric: true
+                }
+            )
+        )
         .forEach(route => {
 
-        const tr =
-            document.createElement('tr');
+            const tr =
+                document.createElement(
+                    "tr"
+                );
 
-        const badgeStyle =
-            route.color
-            ? `background:#${route.color};`
-            : "";
 
-        tr.innerHTML = `
-            <td>${route.agency}</td>
-            <td>
-                <span class="route-badge"
-                      style="${badgeStyle}">
-                    ${route.route}
-                </span>
-            </td>
-            <td>${route.description}</td>
-        `;
+            const checkbox =
+                document.createElement(
+                    "input"
+                );
 
-        tbody.appendChild(tr);
-    });
+            checkbox.type =
+                "checkbox";
 
-    document.getElementById('routeCount').textContent =
-        filtered.length;
+            checkbox.checked =
+                !!progress[route.id];
+
+
+            /*
+             * Every checkbox change is
+             * immediately saved.
+             */
+
+            checkbox.addEventListener(
+                "change",
+                function () {
+
+                    if (this.checked) {
+
+                        progress[route.id] =
+                            true;
+
+                    } else {
+
+                        delete progress[
+                            route.id
+                        ];
+                    }
+
+
+                    saveProgress();
+
+                    updateStats();
+                }
+            );
+
+
+            const checkboxCell =
+                document.createElement(
+                    "td"
+                );
+
+            checkboxCell.appendChild(
+                checkbox
+            );
+
+
+            const agencyCell =
+                document.createElement(
+                    "td"
+                );
+
+            agencyCell.textContent =
+                route.agency;
+
+
+            const routeCell =
+                document.createElement(
+                    "td"
+                );
+
+
+            const badge =
+                document.createElement(
+                    "span"
+                );
+
+            badge.className =
+                "route-badge";
+
+
+            if (route.color) {
+
+                badge.style.background =
+                    "#" + route.color;
+            }
+
+
+            badge.textContent =
+                route.route;
+
+
+            routeCell.appendChild(
+                badge
+            );
+
+
+            const descriptionCell =
+                document.createElement(
+                    "td"
+                );
+
+            descriptionCell.textContent =
+                route.description;
+
+
+            tr.appendChild(
+                checkboxCell
+            );
+
+            tr.appendChild(
+                agencyCell
+            );
+
+            tr.appendChild(
+                routeCell
+            );
+
+            tr.appendChild(
+                descriptionCell
+            );
+
+
+            tbody.appendChild(tr);
+
+        });
+
+
+    updateStats();
 }
 
-document
-    .getElementById('searchBox')
-    .addEventListener('input', renderRoutes);
+
+/* ==========================================
+   STATISTICS
+========================================== */
+
+function updateStats() {
+
+    const search =
+        document.getElementById(
+            "searchBox"
+        )
+        .value
+        .toLowerCase();
+
+
+    const agencyFilter =
+        document.getElementById(
+            "agencyFilter"
+        ).value;
+
+
+    const filtered =
+        allRoutes.filter(route => {
+
+            const matchesAgency =
+                !agencyFilter ||
+                route.agency ===
+                agencyFilter;
+
+
+            const matchesSearch =
+                route.route
+                    .toLowerCase()
+                    .includes(search) ||
+
+                route.description
+                    .toLowerCase()
+                    .includes(search) ||
+
+                route.agency
+                    .toLowerCase()
+                    .includes(search);
+
+
+            return (
+                matchesAgency &&
+                matchesSearch
+            );
+        });
+
+
+    document.getElementById(
+        "routeCount"
+    ).textContent =
+        filtered.length;
+
+
+    document.getElementById(
+        "agencyCount"
+    ).textContent =
+        Object.keys(agencies).length;
+
+
+    const completed =
+        allRoutes.filter(route =>
+            progress[route.id]
+        ).length;
+
+
+    document.getElementById(
+        "completedCount"
+    ).textContent =
+        `${completed} / ${allRoutes.length}`;
+}
+
+
+/* ==========================================
+   SEARCH / FILTER EVENTS
+========================================== */
 
 document
-    .getElementById('agencyFilter')
-    .addEventListener('change', renderRoutes);
+    .getElementById("searchBox")
+    .addEventListener(
+        "input",
+        renderRoutes
+    );
+
+
+document
+    .getElementById("agencyFilter")
+    .addEventListener(
+        "change",
+        renderRoutes
+    );
+
+
+/* ==========================================
+   DOWNLOAD PROGRESS
+========================================== */
+
+function downloadProgress() {
+
+    const data = {
+
+        version: 1,
+
+        exportedAt:
+            new Date().toISOString(),
+
+        progress: progress
+    };
+
+
+    const blob =
+        new Blob(
+            [
+                JSON.stringify(
+                    data,
+                    null,
+                    2
+                )
+            ],
+            {
+                type:
+                    "application/json"
+            }
+        );
+
+
+    const url =
+        URL.createObjectURL(blob);
+
+
+    const a =
+        document.createElement(
+            "a"
+        );
+
+
+    a.href = url;
+
+    a.download =
+        "route-progress.json";
+
+
+    document.body.appendChild(a);
+
+    a.click();
+
+    document.body.removeChild(a);
+
+
+    URL.revokeObjectURL(url);
+}
+
+
+/* ==========================================
+   LOAD PROGRESS JSON
+========================================== */
+
+async function loadProgress() {
+
+    const file =
+        document.getElementById(
+            "progressFile"
+        ).files[0];
+
+
+    if (!file) {
+
+        alert(
+            "Select a progress JSON file first."
+        );
+
+        return;
+    }
+
+
+    try {
+
+        const text =
+            await file.text();
+
+
+        const data =
+            JSON.parse(text);
+
+
+        let loadedProgress;
+
+
+        /*
+         * Supports the newer format:
+         *
+         * {
+         *   "version": 1,
+         *   "exportedAt": "...",
+         *   "progress": {...}
+         * }
+         *
+         * and the original format:
+         *
+         * {
+         *   "route-id": true
+         * }
+         */
+
+        if (
+            data &&
+            typeof data.progress ===
+                "object" &&
+            data.progress !== null
+        ) {
+
+            loadedProgress =
+                data.progress;
+
+        } else if (
+            data &&
+            typeof data ===
+                "object" &&
+            !Array.isArray(data)
+        ) {
+
+            loadedProgress =
+                data;
+
+        } else {
+
+            throw new Error(
+                "Invalid progress format"
+            );
+        }
+
+
+        progress = {};
+
+
+        Object.keys(
+            loadedProgress
+        ).forEach(key => {
+
+            if (
+                loadedProgress[key]
+            ) {
+
+                progress[key] =
+                    true;
+            }
+
+        });
+
+
+        /*
+         * IMPORTANT:
+         * Save imported progress to
+         * localStorage immediately.
+         */
+
+        saveProgress();
+
+
+        renderRoutes();
+
+        updateStats();
+
+
+        const currentRouteIds =
+            new Set(
+                allRoutes.map(
+                    route => route.id
+                )
+            );
+
+
+        const matching =
+            Object.keys(progress)
+                .filter(key =>
+                    currentRouteIds.has(key)
+                )
+                .length;
+
+
+        const unmatched =
+            Object.keys(progress).length -
+            matching;
+
+
+        if (allRoutes.length === 0) {
+
+            alert(
+                `Progress imported and saved.\n\n` +
+                `${Object.keys(progress).length} completed routes loaded.\n\n` +
+                `Load your GTFS files to see the restored progress.`
+            );
+
+        } else if (
+            unmatched > 0
+        ) {
+
+            alert(
+                `Progress imported and saved.\n\n` +
+                `${matching} routes matched the current GTFS data.\n` +
+                `${unmatched} saved routes were not found.`
+            );
+
+        } else {
+
+            alert(
+                `Progress imported and saved.\n\n` +
+                `${matching} completed routes restored.`
+            );
+        }
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        alert(
+            "Could not load the progress file.\n\n" +
+            "Make sure it is a valid route-progress.json file."
+        );
+    }
+}
+
+
+/* ==========================================
+   CLEAR SAVED PROGRESS
+========================================== */
+
+function clearProgress() {
+
+    const confirmed =
+        confirm(
+            "Are you sure you want to clear ALL saved route progress?"
+        );
+
+
+    if (!confirmed) {
+        return;
+    }
+
+
+    progress = {};
+
+
+    localStorage.removeItem(
+        STORAGE_KEY
+    );
+
+
+    renderRoutes();
+
+    updateStats();
+
+
+    updateSaveStatus(
+        "All saved progress cleared"
+    );
+}
+
+
+/* ==========================================
+   DRAG & DROP
+========================================== */
 
 const dropZone =
-    document.getElementById('dropZone');
+    document.getElementById(
+        "dropZone"
+    );
 
-dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-});
 
-dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('dragover');
-});
+dropZone.addEventListener(
+    "dragover",
+    e => {
 
-dropZone.addEventListener('drop', e => {
+        e.preventDefault();
 
-    e.preventDefault();
+        dropZone.classList.add(
+            "dragover"
+        );
+    }
+);
 
-    dropZone.classList.remove('dragover');
 
-    const files = [...e.dataTransfer.files];
+dropZone.addEventListener(
+    "dragleave",
+    () => {
 
-    files.forEach(file => {
+        dropZone.classList.remove(
+            "dragover"
+        );
+    }
+);
 
-        const name = file.name.toLowerCase();
 
-        if (name.includes('agency')) {
+dropZone.addEventListener(
+    "drop",
+    e => {
 
-            const dt = new DataTransfer();
-            dt.items.add(file);
+        e.preventDefault();
 
-            document.getElementById('agencyFile')
-                .files = dt.files;
-        }
+        dropZone.classList.remove(
+            "dragover"
+        );
 
-        if (name.includes('route')) {
 
-            const dt = new DataTransfer();
-            dt.items.add(file);
+        const files =
+            [...e.dataTransfer.files];
 
-            document.getElementById('routesFile')
-                .files = dt.files;
-        }
-    });
 
-});
+        files.forEach(file => {
+
+            const name =
+                file.name.toLowerCase();
+
+
+            if (
+                name.includes("agency")
+            ) {
+
+                const dt =
+                    new DataTransfer();
+
+                dt.items.add(file);
+
+
+                document
+                    .getElementById(
+                        "agencyFile"
+                    )
+                    .files =
+                    dt.files;
+            }
+
+
+            if (
+                name.includes("route")
+            ) {
+
+                const dt =
+                    new DataTransfer();
+
+                dt.items.add(file);
+
+
+                document
+                    .getElementById(
+                        "routesFile"
+                    )
+                    .files =
+                    dt.files;
+            }
+
+
+            if (
+                name.endsWith(".json") ||
+                name.includes("progress")
+            ) {
+
+                const dt =
+                    new DataTransfer();
+
+                dt.items.add(file);
+
+
+                document
+                    .getElementById(
+                        "progressFile"
+                    )
+                    .files =
+                    dt.files;
+            }
+
+        });
+
+    }
+);
 
 </script>
 
